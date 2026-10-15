@@ -50,13 +50,44 @@ button{min-height:44px;border-radius:9px;padding:9px 16px;font-size:14px;font-we
 <script>
 let CONFIG=null;
 const $=id=>document.getElementById(id);
+const RANGE_TEXT={
+  Sex:'Development categories: Female / Male',
+  OperativeTime:'Development range: 31–290 min',
+  FusionLevels:'Development range: 1–5 levels',
+  IntraoperativeFluid:'Development range: 100–5,700 mL',
+  Hb:'Development range: 73–181 g/L',
+  Age:'Development range: 15–82 years',
+  APTT:'Development range: 17.2–40.8 s',
+  Chloride:'Development range: 94–112 mmol/L',
+  Albumin:'Development range: 32.8–56.7 g/L',
+  DrainCount:'Development range: 1–2 drains',
+  TotalProtein:'Development range: 52.2–89.1 g/L',
+  RBCCount:'Development range: 3.04–6.70 ×10¹²/L',
+  Calcium:'Development range: 1.85–3.08 mmol/L',
+  PT:'Development range: 7.9–15.8 s'
+};
+const EXAMPLE_VALUES={
+  Sex:0,
+  OperativeTime:85,
+  FusionLevels:1,
+  IntraoperativeFluid:1350,
+  Hb:141,
+  Age:58,
+  APTT:24.0,
+  Chloride:104,
+  Albumin:45.6,
+  DrainCount:1,
+  TotalProtein:71.5,
+  RBCCount:4.64,
+  Calcium:2.39,
+  PT:11.7
+};
 function sigmoid(z){if(z<-15)return 0;if(z>15)return 1;return 1/(1+Math.exp(-z))}
 function preprocess(raw){return raw.map((v,i)=>CONFIG.standardized[i]?(v-CONFIG.centers[i])/CONFIG.scales[i]:v)}
 function predictNet(x){const n=CONFIG.network,o=new Array(n.nunits).fill(0),nin=n.n[0],nh=n.n[1],nout=n.n[2],firstHidden=1+nin,firstOut=1+nin+nh;o[0]=1;for(let i=0;i<nin;i++)o[i+1]=x[i];for(let j=firstHidden;j<n.nunits;j++){let s=0;for(let k=n.nconn[j];k<n.nconn[j+1];k++)s+=o[n.conn[k]]*n.wts[k];if(j<n.nsunits)s=sigmoid(s);o[j]=s}if(n.softmax){const logits=[];for(let j=0;j<nout;j++)logits.push(o[firstOut+j]);const m=Math.max(...logits),e=logits.map(z=>Math.exp(z-m)),d=e.reduce((a,b)=>a+b,0);return e[0]/d}return o[firstOut]}
 function predictRaw(raw){return predictNet(preprocess(raw))}
-function fmt(x){if(Math.abs(x)>=1000)return Math.round(x).toLocaleString();if(Math.abs(x)>=100)return x.toFixed(1);if(Math.abs(x)>=10)return x.toFixed(2);return x.toFixed(3)}
 function displayUnit(m){return m.name==='RBCCount'?'×10¹²/L':(m.unit||'')}
-function developmentText(m){if(m.name==='Sex')return 'Development categories: Female / Male';if(m.name==='FusionLevels')return 'Development range: 1–5 levels';if(m.name==='DrainCount')return 'Development range: 1–2 drains';const u=displayUnit(m);return 'Development range: '+fmt(m.developmentMin)+'–'+fmt(m.developmentMax)+(u?' '+u:'')}
+function developmentText(m){return RANGE_TEXT[m.name]||''}
 function renderInputs(){CONFIG.inputs.forEach((m,i)=>{const d=document.createElement('div');d.className='field';const l=document.createElement('label');l.htmlFor='f_'+m.name;l.textContent=m.label;const uText=displayUnit(m);if(uText){const u=document.createElement('span');u.className='unit';u.textContent=' ('+uText+')';l.appendChild(u)}let el;if(m.name==='Sex'){el=document.createElement('select');[['','Select'],['0','Female'],['1','Male']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;el.appendChild(o)})}else{el=document.createElement('input');el.type='number';el.inputMode='decimal';if(m.step!=null)el.step=String(m.step);el.placeholder='Enter value'}el.id='f_'+m.name;el.dataset.index=i;const r=document.createElement('div');r.className='range';r.textContent=developmentText(m);d.append(l,el,r);$('inputs').appendChild(d)})}
 function collect(){const raw=[],missing=[],outside=[];CONFIG.inputs.forEach((m,i)=>{const el=$('f_'+m.name),t=el.value.trim();if(t===''){missing.push(m.label);return}const v=Number(t);if(!Number.isFinite(v)){missing.push(m.label);return}if(v<m.developmentMin||v>m.developmentMax)outside.push(m.label);raw[i]=v});return{raw,missing,outside}}
 function showError(t){$('error').textContent=t;$('error').style.display='block'}
@@ -64,7 +95,7 @@ function hideError(){$('error').style.display='none';$('error').textContent=''}
 function showResult(p,outside){$('empty').style.display='none';$('result').style.display='block';const pct=p*100;$('prob').textContent=pct.toFixed(1)+'%';$('bar').style.width=Math.min(Math.max(pct,0),100)+'%';const above=p>=CONFIG.threshold;$('status').className='status '+(above?'above':'below');$('statusTitle').textContent=above?'Above the prespecified decision threshold':'Below the prespecified decision threshold';$('statusDetail').textContent='Locked threshold = '+CONFIG.thresholdPercent.toFixed(2)+'%. This threshold is an operating point of the prediction model, not a treatment threshold.';if(outside.length){$('warn').textContent='Caution: the following value(s) fall outside the observed development range: '+outside.join(', ')+'. The prediction therefore involves extrapolation.';$('warn').style.display='block'}else{$('warn').style.display='none';$('warn').textContent=''}}
 function selfTest(){let maxErr=0;for(const tc of CONFIG.testCases)maxErr=Math.max(maxErr,Math.abs(predictRaw(tc.x)-tc.p));if(Number.isFinite(maxErr)&&maxErr<=CONFIG.selfTestTolerance){$('integrity').className='integrity ok';$('integrity').textContent='Model integrity check passed · max error '+maxErr.toExponential(2);$('calc').disabled=false}else{$('integrity').className='integrity fail';$('integrity').textContent='Model integrity check failed · calculation disabled.';$('calc').disabled=true}}
 $('calc').onclick=()=>{hideError();const v=collect();if(v.missing.length){showError('Please complete: '+v.missing.join(', ')+'.');return}const p=predictRaw(v.raw);if(!Number.isFinite(p)||p<0||p>1){showError('Prediction failed integrity checks. No result was produced.');return}showResult(p,v.outside)};
-$('example').onclick=()=>{CONFIG.inputs.forEach((m,i)=>$('f_'+m.name).value=String(CONFIG.exampleValues[i]));hideError()};
+$('example').onclick=()=>{CONFIG.inputs.forEach(m=>$('f_'+m.name).value=String(EXAMPLE_VALUES[m.name]));hideError()};
 $('reset').onclick=()=>{CONFIG.inputs.forEach(m=>$('f_'+m.name).value='');$('result').style.display='none';$('empty').style.display='block';$('warn').style.display='none';hideError()};
 fetch('MLP_web_parameters.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('Parameter file failed to load');return r.json()}).then(c=>{CONFIG=c;renderInputs();$('model').textContent=c.modelVersion;$('threshold').textContent=c.thresholdPercent.toFixed(2)+'%';selfTest()}).catch(e=>{$('integrity').className='integrity fail';$('integrity').textContent='Model failed to load · calculation disabled.';console.error(e)});
 </script>
